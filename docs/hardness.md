@@ -42,6 +42,27 @@ This command writes:
 
 Copy the `target_mean` and `target_std` values into your config file (see below).
 
+### Auto-split from a single CSV
+
+If you only have one CSV, you can ask the script to split and build all three
+datasets in one step:
+
+```bash
+python scripts/preprocess_hardness.py \
+  --csv data/hardness/all.csv \
+  --out-root data/hardness \
+  --cif-root data/hardness/cifs \
+  --get-edges \
+  --split 0.8 0.1 0.1
+```
+
+This generates:
+- `data/hardness/train.csv`, `val.csv`, `test.csv`
+- `data/hardness/train/`, `val/`, `test/` (each containing `data.lmdb`, `metadata.npz`, `target_stats.json`)
+
+You can customize split names with `--split-names train val test` and seed with
+`--split-seed`.
+
 ## 3) Configure model for hardness regression
 
 This repo ships example configs for all included models under `configs/hardness/`:

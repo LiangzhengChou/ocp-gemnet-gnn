@@ -18,7 +18,7 @@ Optional columns:
 
 ## 2) Build LMDB datasets
 
-Use the preprocessing script to convert CIF files into LMDBs. Run it separately
+Use the new preprocessing script to convert CIF files into LMDBs. Run it separately
 for train/val/test splits:
 
 ```bash
@@ -99,14 +99,6 @@ Train (replace the config with any of the models above):
 python main.py --mode train --config-yml configs/hardness/gemnet/gemnet.yml
 ```
 
-### What gets logged during training
-
-During training, the trainer logs to the console and TensorBoard. You will see:
-- Training loss/metrics at the `print_every` interval.
-- Validation metrics every `eval_every` steps (from your config).
-
-TensorBoard logs are stored under `logs/tensorboard/<run-id>`.
-
 Predict:
 
 ```bash
@@ -115,20 +107,3 @@ python main.py --mode predict --config-yml configs/hardness/gemnet/gemnet.yml \
 ```
 
 Predictions are saved to `results/<run-id>/predictions.npz`.
-
-### Export CSVs for train/val/test (id, target, prediction)
-
-After training, you can generate per-split CSV files containing `id`, `target`,
-and `prediction`:
-
-```bash
-python scripts/predict_hardness.py \
-  --config-yml configs/hardness/gemnet/gemnet.yml \
-  --checkpoint checkpoints/<run-id>/checkpoint.pt \
-  --out-dir hardness_predictions
-```
-
-This writes:
-- `hardness_predictions/train.csv`
-- `hardness_predictions/val.csv`
-- `hardness_predictions/test.csv`

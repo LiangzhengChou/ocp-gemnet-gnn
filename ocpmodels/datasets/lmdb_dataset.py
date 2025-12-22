@@ -92,10 +92,21 @@ class LmdbDataset(Dataset):
                 .begin()
                 .get(f"{self._keys[db_idx][el_idx]}".encode("ascii"))
             )
+            if datapoint_pickled is None:
+                raise ValueError(
+                    "LMDB entry is missing; dataset may be corrupted. "
+                    f"path={self.path}, db_idx={db_idx}, el_idx={el_idx}, "
+                    f"idx={idx}"
+                )
             data_object = pyg2_data_transform(pickle.loads(datapoint_pickled))
             data_object.id = f"{db_idx}_{el_idx}"
         else:
             datapoint_pickled = self.env.begin().get(self._keys[idx])
+            if datapoint_pickled is None:
+                raise ValueError(
+                    "LMDB entry is missing; dataset may be corrupted. "
+                    f"path={self.path}, idx={idx}"
+                )
             data_object = pyg2_data_transform(pickle.loads(datapoint_pickled))
 
         if self.transform is not None:

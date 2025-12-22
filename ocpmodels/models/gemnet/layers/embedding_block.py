@@ -25,8 +25,8 @@ class AtomEmbedding(torch.nn.Module):
         super().__init__()
         self.emb_size = emb_size
 
-        # Atom embeddings: We go up to Bi (83).
-        self.embeddings = torch.nn.Embedding(83, emb_size)
+        # Atom embeddings: We go up to Z=100.
+        self.embeddings = torch.nn.Embedding(100, emb_size)
         # init by uniform distribution
         torch.nn.init.uniform_(
             self.embeddings.weight, a=-np.sqrt(3), b=np.sqrt(3)

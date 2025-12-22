@@ -1,7 +1,8 @@
 # Crystal hardness training & prediction (all model examples)
 
 This guide shows how to use the existing OCP training stack (GemNet + `EnergyTrainer`) to
-train and predict crystal hardness from CIF structures.
+train and predict crystal hardness from CIF structures. It focuses on the end-to-end flow:
+data formatting, preprocessing, configuration, training, and inference outputs.
 
 ## 1) Prepare a CSV file
 
@@ -16,9 +17,16 @@ structures/TiO2.cif,14.8
 Optional columns:
 - `sample_id` (or any column specified via `--id-column`) is stored as `sample_id` in the LMDB.
 
+Recommended conventions:
+- Use consistent hardness units (e.g., GPa). The model treats the target as a scalar regression
+  label, so mixing units will harm training.
+- Use relative paths in `cif_path` when possible, then provide the common root via `--cif-root`.
+- Make sure CIFs are fully reduced and include all required lattice information; failures in
+  parsing show up during preprocessing.
+
 ## 2) Build LMDB datasets
 
-Use the new preprocessing script to convert CIF files into LMDBs. Run it separately
+Use the preprocessing script to convert CIF files into LMDBs. Run it separately
 for train/val/test splits:
 
 ```bash
@@ -41,6 +49,14 @@ This command writes:
 - `target_stats.json` with `target_mean` and `target_std`
 
 Copy the `target_mean` and `target_std` values into your config file (see below).
+
+Common preprocessing flags:
+- `--get-edges` builds neighbor edges during preprocessing. Use this when training GNNs
+  that expect graph edges in the LMDB (e.g., GemNet, DimeNet++). If you omit it, the
+  training pipeline will compute neighbors on the fly.
+- `--id-column` selects the CSV column to store as `sample_id`.
+- `--max-neighbors`, `--radius` can be set to match your model config if you want
+  preprocessing and training to share the same neighbor settings.
 
 ### Auto-split from a single CSV
 
@@ -90,20 +106,70 @@ dataset:
 Notes:
 - Hardness is an intensive property, so `extensive: False` is set in the GemNet config.
 - `scale_file` in the GemNet config reuses the existing GemNet scaling factors.
+- If you train on a different neighbor radius or max neighbors, ensure the model config
+  (`cutoff`, `max_neighbors`, etc.) matches the preprocessing settings to avoid graph
+  mismatches.
+- The hardness configs already set `target_property: hardness`; keep it consistent if you
+  copy configs to new locations.
 
 ## 4) Train and predict
 
-Train (replace the config with any of the models above):
+### What the training command does
+
+The training command starts a full training run using the YAML config:
 
 ```bash
 python main.py --mode train --config-yml configs/hardness/gemnet/gemnet.yml
 ```
 
-Predict:
+Key behavior:
+- `--mode train` uses the `TrainTask`, which calls the `EnergyTrainer` training loop.
+- `--config-yml` points to the model-specific config, which includes the shared
+  `configs/hardness/base.yml`. Together they define:
+  - `dataset`: train/val/test LMDB paths and label normalization stats
+  - `task`: regression settings and label name (`hardness`)
+  - `model`: GemNet architecture and neighbor settings
+  - `optim`: batch size, learning rate, scheduler, and epochs
+- The run creates time-stamped output directories under the current working directory:
+  - `checkpoints/<timestamp>/` for `checkpoint.pt` and `best_checkpoint.pt`
+  - `results/<timestamp>/` for prediction files
+  - `logs/<logger>/<timestamp>/` for training logs (e.g., TensorBoard)
+
+Typical files produced during/after training:
+- `checkpoints/<timestamp>/checkpoint.pt`: latest training checkpoint.
+- `checkpoints/<timestamp>/best_checkpoint.pt`: best checkpoint based on validation MAE.
+- `results/<timestamp>/is2re_predictions.npz`: predictions saved during training whenever
+  validation improves and a test split exists.
+- `results/<timestamp>/hardness_predictions/{train,val,test}.csv`: exported CSV predictions
+  if `task.export_predictions: True` (enabled in the hardness base config).
+
+### Predict (inference-only)
+
+Use predict mode to run inference on the test split with a chosen checkpoint:
 
 ```bash
 python main.py --mode predict --config-yml configs/hardness/gemnet/gemnet.yml \
   --checkpoint checkpoints/<run-id>/checkpoint.pt
 ```
 
-Predictions are saved to `results/<run-id>/predictions.npz`.
+Notes:
+- The config still provides the test dataset (`dataset[2]` in the hardness configs).
+- `--checkpoint` loads model weights from a training run. You can use `best_checkpoint.pt`
+  or `checkpoint.pt`.
+- `run-id` refers to the timestamp directory created during training (e.g., `2024-01-01-12-00-00`).
+
+### Prediction outputs
+
+The prediction file contains:
+- `ids`: the `sample_id` values (or row indices if no `sample_id` provided).
+- `predictions`: model outputs in the same units as your training labels.
+- `targets`: ground-truth hardness values when labels are present.
+
+Where to find them:
+- Predict mode writes `results/<timestamp>/is2re_predictions.npz`.
+- During training, the same filename is used when predictions are written after a
+  validation improvement (with a test split available).
+
+For inference-only runs (no labels), `targets` will be absent; use `ids` to map predictions
+back to the input CSV/CIFs. If you exported CSV predictions, the same mapping is already
+flattened into `results/<timestamp>/hardness_predictions/*.csv`.

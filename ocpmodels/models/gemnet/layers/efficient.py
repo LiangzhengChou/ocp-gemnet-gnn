@@ -71,16 +71,20 @@ class EfficientInteractionDownProjection(torch.nn.Module):
 
         # Zero padded dense matrix
         # maximum number of neighbors, catch empty id_ca with maximum
-        if sph.shape[0] == 0:
+        if sph.shape[0] == 0 or id_ragged_idx.numel() == 0:
             Kmax = 0
         else:
-            Kmax = torch.max(
-                torch.max(id_ragged_idx + 1),
-                torch.tensor(0).to(id_ragged_idx.device),
-            )
+            Kmax = int(torch.clamp_min(id_ragged_idx.max() + 1, 0).item())
 
         sph2 = sph.new_zeros(num_edges, Kmax, self.num_spherical)
-        sph2[id_ca, id_ragged_idx] = sph
+        if sph.numel() > 0 and Kmax > 0:
+            valid = (
+                (id_ca >= 0)
+                & (id_ca < num_edges)
+                & (id_ragged_idx >= 0)
+                & (id_ragged_idx < Kmax)
+            )
+            sph2[id_ca[valid], id_ragged_idx[valid]] = sph[valid]
 
         sph2 = torch.transpose(sph2, 1, 2)
         # (nEdges, num_spherical/emb_size_interm, Kmax)
@@ -149,13 +153,20 @@ class EfficientInteractionBilinear(torch.nn.Module):
         nEdges = rbf_W1.shape[0]
 
         # Create (zero-padded) dense matrix of the neighboring edge embeddings.
-        Kmax = torch.max(
-            torch.max(id_ragged_idx) + 1,
-            torch.tensor(0).to(id_ragged_idx.device),
-        )
+        if id_ragged_idx.numel() == 0:
+            Kmax = 0
+        else:
+            Kmax = int(torch.clamp_min(id_ragged_idx.max() + 1, 0).item())
         # maximum number of neighbors, catch empty id_reduce_ji with maximum
         m2 = m.new_zeros(nEdges, Kmax, self.emb_size)
-        m2[id_reduce, id_ragged_idx] = m
+        if m.numel() > 0 and Kmax > 0:
+            valid = (
+                (id_reduce >= 0)
+                & (id_reduce < nEdges)
+                & (id_ragged_idx >= 0)
+                & (id_ragged_idx < Kmax)
+            )
+            m2[id_reduce[valid], id_ragged_idx[valid]] = m[valid]
         # (num_quadruplets or num_triplets, emb_size) -> (nEdges, Kmax, emb_size)
 
         sum_k = torch.matmul(sph, m2)  # (nEdges, num_spherical, emb_size)

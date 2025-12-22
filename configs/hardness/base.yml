@@ -17,3 +17,4 @@ task:
   metric: mae
   labels:
     - hardness
+  export_predictions: True

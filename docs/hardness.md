@@ -114,25 +114,62 @@ Notes:
 
 ## 4) Train and predict
 
-Train (replace the config with any of the models above):
+### What the training command does
+
+The training command starts a full training run using the YAML config:
 
 ```bash
 python main.py --mode train --config-yml configs/hardness/gemnet/gemnet.yml
 ```
 
-Predict:
+Key behavior:
+- `--mode train` uses the `TrainTask`, which calls the `EnergyTrainer` training loop.
+- `--config-yml` points to the model-specific config, which includes the shared
+  `configs/hardness/base.yml`. Together they define:
+  - `dataset`: train/val/test LMDB paths and label normalization stats
+  - `task`: regression settings and label name (`hardness`)
+  - `model`: GemNet architecture and neighbor settings
+  - `optim`: batch size, learning rate, scheduler, and epochs
+- The run creates time-stamped output directories under the current working directory:
+  - `checkpoints/<timestamp>/` for `checkpoint.pt` and `best_checkpoint.pt`
+  - `results/<timestamp>/` for prediction files
+  - `logs/<logger>/<timestamp>/` for training logs (e.g., TensorBoard)
+
+Typical files produced during/after training:
+- `checkpoints/<timestamp>/checkpoint.pt`: latest training checkpoint.
+- `checkpoints/<timestamp>/best_checkpoint.pt`: best checkpoint based on validation MAE.
+- `results/<timestamp>/is2re_predictions.npz`: predictions saved during training whenever
+  validation improves and a test split exists.
+- `results/<timestamp>/hardness_predictions/{train,val,test}.csv`: exported CSV predictions
+  if `task.export_predictions: True` (enabled in the hardness base config).
+
+### Predict (inference-only)
+
+Use predict mode to run inference on the test split with a chosen checkpoint:
 
 ```bash
 python main.py --mode predict --config-yml configs/hardness/gemnet/gemnet.yml \
   --checkpoint checkpoints/<run-id>/checkpoint.pt
 ```
 
-Predictions are saved to `results/<run-id>/predictions.npz`.
+Notes:
+- The config still provides the test dataset (`dataset[2]` in the hardness configs).
+- `--checkpoint` loads model weights from a training run. You can use `best_checkpoint.pt`
+  or `checkpoint.pt`.
+- `run-id` refers to the timestamp directory created during training (e.g., `2024-01-01-12-00-00`).
+
+### Prediction outputs
 
 The prediction file contains:
 - `ids`: the `sample_id` values (or row indices if no `sample_id` provided).
-- `targets`: ground-truth hardness values when labels are present.
 - `predictions`: model outputs in the same units as your training labels.
+- `targets`: ground-truth hardness values when labels are present.
+
+Where to find them:
+- Predict mode writes `results/<timestamp>/is2re_predictions.npz`.
+- During training, the same filename is used when predictions are written after a
+  validation improvement (with a test split available).
 
 For inference-only runs (no labels), `targets` will be absent; use `ids` to map predictions
-back to the input CSV/CIFs.
+back to the input CSV/CIFs. If you exported CSV predictions, the same mapping is already
+flattened into `results/<timestamp>/hardness_predictions/*.csv`.

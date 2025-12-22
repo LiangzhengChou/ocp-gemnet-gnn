@@ -1,7 +1,8 @@
 # Crystal hardness training & prediction (all model examples)
 
 This guide shows how to use the existing OCP training stack (GemNet + `EnergyTrainer`) to
-train and predict crystal hardness from CIF structures.
+train and predict crystal hardness from CIF structures. It focuses on the end-to-end flow:
+data formatting, preprocessing, configuration, training, and inference outputs.
 
 ## 1) Prepare a CSV file
 
@@ -16,9 +17,16 @@ structures/TiO2.cif,14.8
 Optional columns:
 - `sample_id` (or any column specified via `--id-column`) is stored as `sample_id` in the LMDB.
 
+Recommended conventions:
+- Use consistent hardness units (e.g., GPa). The model treats the target as a scalar regression
+  label, so mixing units will harm training.
+- Use relative paths in `cif_path` when possible, then provide the common root via `--cif-root`.
+- Make sure CIFs are fully reduced and include all required lattice information; failures in
+  parsing show up during preprocessing.
+
 ## 2) Build LMDB datasets
 
-Use the new preprocessing script to convert CIF files into LMDBs. Run it separately
+Use the preprocessing script to convert CIF files into LMDBs. Run it separately
 for train/val/test splits:
 
 ```bash
@@ -41,6 +49,14 @@ This command writes:
 - `target_stats.json` with `target_mean` and `target_std`
 
 Copy the `target_mean` and `target_std` values into your config file (see below).
+
+Common preprocessing flags:
+- `--get-edges` builds neighbor edges during preprocessing. Use this when training GNNs
+  that expect graph edges in the LMDB (e.g., GemNet, DimeNet++). If you omit it, the
+  training pipeline will compute neighbors on the fly.
+- `--id-column` selects the CSV column to store as `sample_id`.
+- `--max-neighbors`, `--radius` can be set to match your model config if you want
+  preprocessing and training to share the same neighbor settings.
 
 ### Auto-split from a single CSV
 
@@ -90,6 +106,11 @@ dataset:
 Notes:
 - Hardness is an intensive property, so `extensive: False` is set in the GemNet config.
 - `scale_file` in the GemNet config reuses the existing GemNet scaling factors.
+- If you train on a different neighbor radius or max neighbors, ensure the model config
+  (`cutoff`, `max_neighbors`, etc.) matches the preprocessing settings to avoid graph
+  mismatches.
+- The hardness configs already set `target_property: hardness`; keep it consistent if you
+  copy configs to new locations.
 
 ## 4) Train and predict
 
@@ -107,3 +128,11 @@ python main.py --mode predict --config-yml configs/hardness/gemnet/gemnet.yml \
 ```
 
 Predictions are saved to `results/<run-id>/predictions.npz`.
+
+The prediction file contains:
+- `ids`: the `sample_id` values (or row indices if no `sample_id` provided).
+- `targets`: ground-truth hardness values when labels are present.
+- `predictions`: model outputs in the same units as your training labels.
+
+For inference-only runs (no labels), `targets` will be absent; use `ids` to map predictions
+back to the input CSV/CIFs.

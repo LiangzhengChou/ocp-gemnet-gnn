@@ -8,7 +8,9 @@ LICENSE file in the root directory of this source tree.
 import logging
 import os
 
+from ocpmodels.common import distutils
 from ocpmodels.common.registry import registry
+from ocpmodels.common.hardness_utils import write_predictions_csv
 from ocpmodels.trainers.forces_trainer import ForcesTrainer
 
 
@@ -51,9 +53,48 @@ class TrainTask(BaseTask):
                     "hide_eval_progressbar", False
                 )
             )
+            self._export_predictions()
         except RuntimeError as e:
             self._process_error(e)
             raise e
+
+    def _export_predictions(self) -> None:
+        task_config = self.config.get("task", {})
+        if not task_config.get("export_predictions", False):
+            return
+        if not distutils.is_master():
+            return
+
+        export_dir = task_config.get(
+            "export_predictions_dir",
+            os.path.join(
+                self.trainer.config["cmd"]["results_dir"],
+                "hardness_predictions",
+            ),
+        )
+        splits = task_config.get("export_splits", ["train", "val", "test"])
+        loader_map = {
+            "train": self.trainer.train_loader,
+            "val": self.trainer.val_loader,
+            "test": self.trainer.test_loader,
+        }
+        for split in splits:
+            loader = loader_map.get(split)
+            if loader is None:
+                logging.warning(
+                    "Split '%s' is not available for prediction export", split
+                )
+                continue
+            out_path = os.path.join(export_dir, f"{split}.csv")
+            write_predictions_csv(
+                self.trainer,
+                loader,
+                out_path,
+                disable_tqdm=self.config.get(
+                    "hide_eval_progressbar", False
+                ),
+            )
+            logging.info("Wrote predictions for %s to %s", split, out_path)
 
 
 @registry.register_task("predict")

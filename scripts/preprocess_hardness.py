@@ -28,8 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--csv", required=True, help="Path to CSV file")
     parser.add_argument(
         "--out-path",
-        required=True,
         help="Output directory for data.lmdb and metadata.npz",
+    )
+    parser.add_argument(
+        "--out-root",
+        help="Root directory for train/val/test outputs when using --split",
     )
     parser.add_argument(
         "--cif-root",
@@ -79,7 +82,40 @@ def parse_args() -> argparse.Namespace:
         default=64,
         help="LMDB map size in GB",
     )
+    parser.add_argument(
+        "--split",
+        nargs=3,
+        type=float,
+        default=None,
+        metavar=("TRAIN", "VAL", "TEST"),
+        help="Optional split fractions for train/val/test",
+    )
+    parser.add_argument(
+        "--split-names",
+        nargs=3,
+        default=["train", "val", "test"],
+        help="Split names when using --split",
+    )
+    parser.add_argument(
+        "--split-seed",
+        type=int,
+        default=0,
+        help="Random seed for --split",
+    )
     return parser.parse_args()
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    if args.split and not args.out_root:
+        raise SystemExit("--out-root is required when using --split")
+    if not args.split and not args.out_path:
+        raise SystemExit("--out-path is required unless --split is provided")
+    if args.split:
+        split_sum = sum(args.split)
+        if split_sum <= 0:
+            raise SystemExit("--split values must sum to a positive number")
+        if len(args.split_names) != 3:
+            raise SystemExit("--split-names must provide three values")
 
 
 def build_cif_path(cif_root: str, cif_path: str) -> str:
@@ -92,6 +128,53 @@ def load_rows(csv_path: str) -> List[Dict[str, str]]:
     with open(csv_path, "r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         return list(reader)
+
+
+def load_rows_with_header(
+    csv_path: str,
+) -> Tuple[List[Dict[str, str]], List[str]]:
+    with open(csv_path, "r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+        return rows, list(reader.fieldnames or [])
+
+
+def split_rows(
+    rows: List[Dict[str, str]],
+    split: List[float],
+    seed: int,
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
+    rng = np.random.default_rng(seed)
+    indices = np.arange(len(rows))
+    rng.shuffle(indices)
+
+    split = np.array(split, dtype=np.float64)
+    split = split / split.sum()
+    n_total = len(rows)
+    n_train = int(split[0] * n_total)
+    n_val = int(split[1] * n_total)
+    n_test = n_total - n_train - n_val
+
+    train_idx = indices[:n_train]
+    val_idx = indices[n_train : n_train + n_val]
+    test_idx = indices[n_train + n_val : n_train + n_val + n_test]
+
+    train_rows = [rows[i] for i in train_idx]
+    val_rows = [rows[i] for i in val_idx]
+    test_rows = [rows[i] for i in test_idx]
+    return train_rows, val_rows, test_rows
+
+
+def write_csv(
+    rows: List[Dict[str, str]],
+    fieldnames: List[str],
+    out_path: str,
+) -> None:
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def convert_row(
@@ -123,9 +206,12 @@ def convert_row(
     return data_object, natoms, neighbors
 
 
-def main() -> None:
-    args = parse_args()
-    os.makedirs(args.out_path, exist_ok=True)
+def write_lmdb(
+    args: argparse.Namespace,
+    rows: List[Dict[str, str]],
+    out_path: str,
+) -> None:
+    os.makedirs(out_path, exist_ok=True)
 
     a2g = AtomsToGraphs(
         max_neigh=args.max_neigh,
@@ -137,7 +223,7 @@ def main() -> None:
         r_fixed=True,
     )
 
-    db_path = os.path.join(args.out_path, "data.lmdb")
+    db_path = os.path.join(out_path, "data.lmdb")
     db = lmdb.open(
         db_path,
         map_size=args.map_size_gb * 1024**3,
@@ -146,7 +232,6 @@ def main() -> None:
         map_async=True,
     )
 
-    rows = load_rows(args.csv)
     natoms_list = []
     neighbors_list = []
     targets = []
@@ -192,7 +277,7 @@ def main() -> None:
         torch.cat(neighbors_list).numpy() if neighbors_list else np.array([])
     )
     np.savez(
-        os.path.join(args.out_path, "metadata.npz"),
+        os.path.join(out_path, "metadata.npz"),
         natoms=natoms_arr,
         neighbors=neighbors_arr,
     )
@@ -207,7 +292,7 @@ def main() -> None:
     else:
         stats = {"target_mean": 0.0, "target_std": 1.0, "num_samples": 0}
 
-    stats_path = os.path.join(args.out_path, "target_stats.json")
+    stats_path = os.path.join(out_path, "target_stats.json")
     with open(stats_path, "w", encoding="utf-8") as handle:
         json.dump(stats, handle, indent=2)
 
@@ -216,6 +301,31 @@ def main() -> None:
             count=idx, stats=stats_path
         )
     )
+
+
+def main() -> None:
+    args = parse_args()
+    validate_args(args)
+
+    if args.split:
+        rows, fieldnames = load_rows_with_header(args.csv)
+        train_rows, val_rows, test_rows = split_rows(
+            rows, args.split, args.split_seed
+        )
+        split_rows_map = {
+            args.split_names[0]: train_rows,
+            args.split_names[1]: val_rows,
+            args.split_names[2]: test_rows,
+        }
+        for split_name, split_rows_list in split_rows_map.items():
+            split_csv_path = os.path.join(args.out_root, f"{split_name}.csv")
+            write_csv(split_rows_list, fieldnames, split_csv_path)
+            split_out_path = os.path.join(args.out_root, split_name)
+            write_lmdb(args, split_rows_list, split_out_path)
+        return
+
+    rows = load_rows(args.csv)
+    write_lmdb(args, rows, args.out_path)
 
 
 if __name__ == "__main__":

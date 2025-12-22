@@ -302,7 +302,13 @@ class EnergyTrainer(BaseTrainer):
 
     def _compute_loss(self, out, batch_list):
         energy_target = torch.cat(
-            [batch.y_relaxed.to(self.device) for batch in batch_list], dim=0
+            [
+                (batch.y_relaxed if hasattr(batch, "y_relaxed") else batch.y).to(
+                    self.device
+                )
+                for batch in batch_list
+            ],
+            dim=0,
         )
 
         if self.normalizer.get("normalize_labels", False):
@@ -315,7 +321,13 @@ class EnergyTrainer(BaseTrainer):
 
     def _compute_metrics(self, out, batch_list, evaluator, metrics={}):
         energy_target = torch.cat(
-            [batch.y_relaxed.to(self.device) for batch in batch_list], dim=0
+            [
+                (batch.y_relaxed if hasattr(batch, "y_relaxed") else batch.y).to(
+                    self.device
+                )
+                for batch in batch_list
+            ],
+            dim=0,
         )
 
         if self.normalizer.get("normalize_labels", False):

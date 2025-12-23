@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch_geometric
+from torch.utils.data import Subset
 from tqdm import tqdm
 
 from ocpmodels.common import distutils
@@ -403,11 +404,21 @@ class ForcesTrainer(BaseTrainer):
             if checkpoint_every == -1:
                 self.save(checkpoint_file="checkpoint.pt", training_state=True)
 
-        self.train_dataset.close_db()
+        def _close_dataset_db(dataset):
+            if dataset is None:
+                return
+            target = dataset
+            while isinstance(target, Subset):
+                target = target.dataset
+            close_db = getattr(target, "close_db", None)
+            if callable(close_db):
+                close_db()
+
+        _close_dataset_db(self.train_dataset)
         if "val_dataset" in self.config:
-            self.val_dataset.close_db()
+            _close_dataset_db(self.val_dataset)
         if "test_dataset" in self.config:
-            self.test_dataset.close_db()
+            _close_dataset_db(self.test_dataset)
 
     def _forward(self, batch_list):
         # forward pass.

@@ -65,10 +65,17 @@ class LmdbDataset(Dataset):
         else:
             self.metadata_path = self.path.parent / "metadata.npz"
             self.env = self.connect_db(self.path)
-            self._keys = [
-                f"{j}".encode("ascii")
-                for j in range(self.env.stat()["entries"])
-            ]
+            length_bytes = self.env.begin().get("length".encode("ascii"))
+            if length_bytes is not None:
+                length = pickle.loads(length_bytes)
+                self._keys = [
+                    f"{j}".encode("ascii") for j in range(length)
+                ]
+            else:
+                self._keys = [
+                    f"{j}".encode("ascii")
+                    for j in range(self.env.stat()["entries"])
+                ]
             self.num_samples = len(self._keys)
 
         self.transform = transform

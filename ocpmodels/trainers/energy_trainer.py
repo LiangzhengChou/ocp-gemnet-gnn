@@ -284,11 +284,7 @@ class EnergyTrainer(BaseTrainer):
 
             torch.cuda.empty_cache()
 
-        self.train_dataset.close_db()
-        if "val_dataset" in self.config:
-            self.val_dataset.close_db()
-        if "test_dataset" in self.config:
-            self.test_dataset.close_db()
+
 
     def _forward(self, batch_list):
         output = self.model(batch_list)

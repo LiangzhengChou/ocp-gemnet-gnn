@@ -349,6 +349,23 @@ class BaseTrainer(ABC):
                     device=self.device,
                 )
 
+    def close_datasets(self):
+        def _close_dataset_db(dataset):
+            if dataset is None:
+                return
+            target = dataset
+            while isinstance(target, Subset):
+                target = target.dataset
+            close_db = getattr(target, "close_db", None)
+            if callable(close_db):
+                close_db()
+
+        _close_dataset_db(getattr(self, "train_dataset", None))
+        if self.config.get("val_dataset", None):
+            _close_dataset_db(getattr(self, "val_dataset", None))
+        if self.config.get("test_dataset", None):
+            _close_dataset_db(getattr(self, "test_dataset", None))
+
     @abstractmethod
     def load_task(self):
         """Initialize task-specific information. Derived classes should implement this function."""

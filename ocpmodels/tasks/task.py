@@ -57,6 +57,8 @@ class TrainTask(BaseTask):
         except RuntimeError as e:
             self._process_error(e)
             raise e
+        finally:
+            self.trainer.close_datasets()
 
     def _export_predictions(self) -> None:
         task_config = self.config.get("task", {})

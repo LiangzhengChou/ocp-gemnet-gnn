@@ -12,6 +12,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 import torch_geometric
+from torch.utils.data import Subset
 from tqdm import tqdm
 
 from ocpmodels.common import distutils

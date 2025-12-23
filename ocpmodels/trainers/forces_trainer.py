@@ -404,21 +404,7 @@ class ForcesTrainer(BaseTrainer):
             if checkpoint_every == -1:
                 self.save(checkpoint_file="checkpoint.pt", training_state=True)
 
-        def _close_dataset_db(dataset):
-            if dataset is None:
-                return
-            target = dataset
-            while isinstance(target, Subset):
-                target = target.dataset
-            close_db = getattr(target, "close_db", None)
-            if callable(close_db):
-                close_db()
 
-        _close_dataset_db(self.train_dataset)
-        if "val_dataset" in self.config:
-            _close_dataset_db(self.val_dataset)
-        if "test_dataset" in self.config:
-            _close_dataset_db(self.test_dataset)
 
     def _forward(self, batch_list):
         # forward pass.

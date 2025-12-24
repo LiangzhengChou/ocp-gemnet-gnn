@@ -78,6 +78,7 @@ class EnergyTrainer(BaseTrainer):
         amp=False,
         cpu=False,
         slurm={},
+        loss=None,
     ):
         super().__init__(
             task=task,
@@ -98,6 +99,7 @@ class EnergyTrainer(BaseTrainer):
             cpu=cpu,
             name="is2re",
             slurm=slurm,
+            loss=loss,
         )
 
     def load_task(self):

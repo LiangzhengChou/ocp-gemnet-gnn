@@ -173,3 +173,23 @@ Where to find them:
 For inference-only runs (no labels), `targets` will be absent; use `ids` to map predictions
 back to the input CSV/CIFs. If you exported CSV predictions, the same mapping is already
 flattened into `results/<timestamp>/hardness_predictions/*.csv`.
+
+### Heteroscedastic loss (optional)
+
+You can enable heteroscedastic loss to have the model output both a prediction mean and
+sample-level uncertainty. This augments the usual regression output with a variance or
+standard deviation and typically uses a Gaussian negative log-likelihood formulation.
+
+Recommended config pattern:
+- `loss.type`: `homoscedastic` or `heteroscedastic` (default: `homoscedastic`).
+- `loss.heteroscedastic.enabled`: `true` to activate the heteroscedastic path.
+- `loss.heteroscedastic.output`: `variance` or `std` to control the uncertainty field.
+
+When enabled:
+- The model emits both a prediction mean and an uncertainty value per sample.
+- Exported CSVs at `results/<timestamp>/hardness_predictions/{train,val,test}.csv` include
+  the additional uncertainty column (`variance` or `std`) alongside `sample_id`, `target`,
+  and `prediction`.
+
+When disabled (default), the training and export flow is unchanged and CSVs keep the
+original three columns.

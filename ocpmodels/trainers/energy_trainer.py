@@ -128,6 +128,12 @@ class EnergyTrainer(BaseTrainer):
             else "min_std"
         )
         self.heteroscedastic_min = hetero_config.get(min_key, 1e-6)
+        try:
+            self.heteroscedastic_min = float(self.heteroscedastic_min)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"loss.heteroscedastic.{min_key} must be a number."
+            ) from exc
 
     @torch.no_grad()
     def predict(

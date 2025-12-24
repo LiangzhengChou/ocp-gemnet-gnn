@@ -59,30 +59,59 @@ def write_predictions_csv(
                 out = trainer._forward(batch)
 
         energy = out["energy"]
+        uncertainty = None
+        uncertainty_field = None
+        if "energy_variance" in out:
+            uncertainty = out["energy_variance"]
+            uncertainty_field = "variance"
+        elif "energy_std" in out:
+            uncertainty = out["energy_std"]
+            uncertainty_field = "std"
+
         if trainer.normalizers is not None and "target" in trainer.normalizers:
             energy = trainer.normalizers["target"].denorm(energy)
+            if uncertainty is not None:
+                scale = trainer.normalizers["target"].std
+                if uncertainty_field == "variance":
+                    uncertainty = uncertainty * scale**2
+                else:
+                    uncertainty = uncertainty * scale
 
         targets = gather_targets(batch_data).to(energy.device)
         ids = gather_ids(batch_data)
 
-        for sample_id, target, pred in zip(
-            ids, targets.detach().cpu().tolist(), energy.detach().cpu().tolist()
-        ):
-            predictions.append(
-                {
-                    "sample_id": sample_id,
-                    "target": float(target),
-                    "prediction": float(pred),
-                }
+        entries = zip(
+            ids,
+            targets.detach().cpu().tolist(),
+            energy.detach().cpu().tolist(),
+        )
+        if uncertainty is not None:
+            entries = zip(
+                ids,
+                targets.detach().cpu().tolist(),
+                energy.detach().cpu().tolist(),
+                uncertainty.detach().cpu().tolist(),
             )
+
+        for row in entries:
+            sample_id, target, pred = row[:3]
+            row_dict = {
+                "sample_id": sample_id,
+                "target": float(target),
+                "prediction": float(pred),
+            }
+            if uncertainty is not None:
+                row_dict[uncertainty_field] = float(row[3])
+            predictions.append(row_dict)
 
     if trainer.ema:
         trainer.ema.restore()
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fieldnames = ["sample_id", "target", "prediction"]
+    if predictions and uncertainty_field is not None:
+        fieldnames.append(uncertainty_field)
     with open(out_path, "w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(
-            handle, fieldnames=["sample_id", "target", "prediction"]
-        )
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(predictions)

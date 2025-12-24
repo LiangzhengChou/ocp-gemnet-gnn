@@ -8,6 +8,7 @@ from typing import Iterable, List
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 
@@ -67,6 +68,15 @@ def write_predictions_csv(
         elif "energy_std" in out:
             uncertainty = out["energy_std"]
             uncertainty_field = "std"
+        elif getattr(trainer, "heteroscedastic_enabled", False):
+            output_mode = getattr(trainer, "heteroscedastic_output", "variance")
+            uncertainty_field = "std" if output_mode == "std" else "variance"
+            if energy.ndim > 1 and energy.shape[-1] == 2:
+                mean = energy[..., 0]
+                raw_uncertainty = energy[..., 1]
+                min_uncertainty = getattr(trainer, "heteroscedastic_min", 1e-6)
+                uncertainty = F.softplus(raw_uncertainty) + min_uncertainty
+                energy = mean
 
         if trainer.normalizers is not None and "target" in trainer.normalizers:
             energy = trainer.normalizers["target"].denorm(energy)

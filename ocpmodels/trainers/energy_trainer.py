@@ -11,6 +11,7 @@ from collections import defaultdict
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch_geometric
 from torch.utils.data import Subset
 from tqdm import tqdm
@@ -77,6 +78,7 @@ class EnergyTrainer(BaseTrainer):
         amp=False,
         cpu=False,
         slurm={},
+        loss=None,
     ):
         super().__init__(
             task=task,
@@ -97,11 +99,41 @@ class EnergyTrainer(BaseTrainer):
             cpu=cpu,
             name="is2re",
             slurm=slurm,
+            loss=loss,
         )
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
-        self.num_targets = 1
+        self._load_heteroscedastic_config()
+        self.num_targets = 2 if self.heteroscedastic_enabled else 1
+
+    def _load_heteroscedastic_config(self):
+        loss_config = self.config.get("loss", {})
+        hetero_config = loss_config.get("heteroscedastic", {})
+        loss_type = loss_config.get("type", "homoscedastic")
+        enabled = hetero_config.get("enabled", False)
+        self.heteroscedastic_enabled = (
+            loss_type == "heteroscedastic" or enabled
+        )
+        self.heteroscedastic_output = hetero_config.get(
+            "output", "variance"
+        )
+        if self.heteroscedastic_output not in ("variance", "std"):
+            raise ValueError(
+                "loss.heteroscedastic.output must be 'variance' or 'std'"
+            )
+        min_key = (
+            "min_variance"
+            if self.heteroscedastic_output == "variance"
+            else "min_std"
+        )
+        self.heteroscedastic_min = hetero_config.get(min_key, 1e-6)
+        try:
+            self.heteroscedastic_min = float(self.heteroscedastic_min)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"loss.heteroscedastic.{min_key} must be a number."
+            ) from exc
 
     @torch.no_grad()
     def predict(
@@ -129,6 +161,8 @@ class EnergyTrainer(BaseTrainer):
         if self.normalizers is not None and "target" in self.normalizers:
             self.normalizers["target"].to(self.device)
         predictions = {"id": [], "energy": []}
+        if self.heteroscedastic_enabled:
+            predictions[self.heteroscedastic_output] = []
 
         for i, batch in tqdm(
             enumerate(loader),
@@ -144,17 +178,29 @@ class EnergyTrainer(BaseTrainer):
                 out["energy"] = self.normalizers["target"].denorm(
                     out["energy"]
                 )
+                out = self._denorm_uncertainty(out)
 
             if per_image:
                 predictions["id"].extend(
                     [str(i) for i in batch[0].sid.tolist()]
                 )
                 predictions["energy"].extend(out["energy"].tolist())
+                if self.heteroscedastic_enabled:
+                    predictions[self.heteroscedastic_output].extend(
+                        out[self._uncertainty_key()].tolist()
+                    )
             else:
                 predictions["energy"] = out["energy"].detach()
+                if self.heteroscedastic_enabled:
+                    predictions[self.heteroscedastic_output] = out[
+                        self._uncertainty_key()
+                    ].detach()
                 return predictions
 
-        self.save_results(predictions, results_file, keys=["energy"])
+        keys = ["energy"]
+        if self.heteroscedastic_enabled:
+            keys.append(self.heteroscedastic_output)
+        self.save_results(predictions, results_file, keys=keys)
 
         if self.ema:
             self.ema.restore()
@@ -290,12 +336,22 @@ class EnergyTrainer(BaseTrainer):
     def _forward(self, batch_list):
         output = self.model(batch_list)
 
+        if self.heteroscedastic_enabled:
+            if output.shape[-1] != 2:
+                raise ValueError(
+                    "Heteroscedastic loss requires model output with 2 targets."
+                )
+            mean = output[..., 0]
+            raw_uncertainty = output[..., 1]
+            uncertainty = F.softplus(raw_uncertainty) + self.heteroscedastic_min
+            output_dict = {"energy": mean}
+            output_dict[self._uncertainty_key()] = uncertainty
+            return output_dict
+
         if output.shape[-1] == 1:
             output = output.view(-1)
 
-        return {
-            "energy": output,
-        }
+        return {"energy": output}
 
     def _compute_loss(self, out, batch_list):
         energy_target = torch.cat(
@@ -313,8 +369,20 @@ class EnergyTrainer(BaseTrainer):
         else:
             target_normed = energy_target
 
-        loss = self.loss_fn["energy"](out["energy"], target_normed)
-        return loss
+        if self.heteroscedastic_enabled:
+            mean = out["energy"]
+            uncertainty = out[self._uncertainty_key()]
+            if self.heteroscedastic_output == "std":
+                variance = uncertainty.pow(2)
+            else:
+                variance = uncertainty
+            nll = 0.5 * (
+                (target_normed - mean).pow(2) / variance
+                + torch.log(variance)
+            )
+            return nll.mean()
+
+        return self.loss_fn["energy"](out["energy"], target_normed)
 
     def _compute_metrics(self, out, batch_list, evaluator, metrics={}):
         energy_target = torch.cat(
@@ -337,3 +405,22 @@ class EnergyTrainer(BaseTrainer):
         )
 
         return metrics
+
+    def _uncertainty_key(self) -> str:
+        if self.heteroscedastic_output == "std":
+            return "energy_std"
+        return "energy_variance"
+
+    def _denorm_uncertainty(self, out):
+        if not self.heteroscedastic_enabled:
+            return out
+        if self.normalizers is None or "target" not in self.normalizers:
+            return out
+        scale = self.normalizers["target"].std
+        if self.heteroscedastic_output == "std":
+            out[self._uncertainty_key()] = out[self._uncertainty_key()] * scale
+        else:
+            out[self._uncertainty_key()] = out[self._uncertainty_key()] * (
+                scale**2
+            )
+        return out

@@ -70,6 +70,7 @@ class BaseTrainer(ABC):
         cpu=False,
         name="base_trainer",
         slurm={},
+        loss=None,
     ):
         self.name = name
         self.cpu = cpu
@@ -125,6 +126,7 @@ class BaseTrainer(ABC):
             "model": model.pop("name"),
             "model_attributes": model,
             "optim": optimizer,
+            "loss": loss,
             "logger": logger,
             "amp": amp,
             "gpus": distutils.get_world_size() if not self.cpu else 0,

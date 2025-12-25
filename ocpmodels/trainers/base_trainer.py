@@ -128,7 +128,7 @@ class BaseTrainer(ABC):
             "model": model.pop("name"),
             "model_attributes": model,
             "optim": optimizer,
-            "loss": loss,
+            "loss": loss or {},
             "logger": logger,
             "amp": amp,
             "gpus": distutils.get_world_size() if not self.cpu else 0,

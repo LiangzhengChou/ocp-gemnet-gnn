@@ -61,6 +61,7 @@ class BaseTrainer(ABC):
         timestamp_id=None,
         run_dir=None,
         is_debug=False,
+        is_vis=False,
         is_hpo=False,
         print_every=100,
         seed=None,
@@ -74,6 +75,7 @@ class BaseTrainer(ABC):
     ):
         self.name = name
         self.cpu = cpu
+        self.is_vis = is_vis
         self.epoch = 0
         self.step = 0
 
@@ -126,7 +128,7 @@ class BaseTrainer(ABC):
             "model": model.pop("name"),
             "model_attributes": model,
             "optim": optimizer,
-            "loss": loss,
+            "loss": loss or {},
             "logger": logger,
             "amp": amp,
             "gpus": distutils.get_world_size() if not self.cpu else 0,
